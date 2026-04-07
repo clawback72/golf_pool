@@ -1,0 +1,25 @@
+{
+  "tournament_name": "Tournament Name YYYY",
+  "pool_enabled": false,
+  "participants": {},
+  "source": {
+    "leaderboard_url": "https://www.pgatour.com/leaderboard",
+    "pga_event_id": ""
+  },
+  "run_window": {
+    "start_hour": 1,
+    "end_hour": 18
+  },
+  "backup": {
+    "enabled": true,
+    "directory": "/absolute/path/to/data_backup"
+  },
+  "output": {
+    "google_sheets": {
+      "enabled": false,
+      "service_account_env": "GOOGLE_SERVICE_ACCOUNT_JSON",
+      "sheet_url": "",
+      "worksheet_name": "Sheet1"
+    }
+  }
+}

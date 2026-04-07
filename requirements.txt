@@ -1,0 +1,7 @@
+beautifulsoup4
+gspread
+google-auth
+numpy
+pandas
+pytz
+requests

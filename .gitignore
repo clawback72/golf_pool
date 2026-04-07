@@ -1,0 +1,31 @@
+# DS_Store
+.DS_Store
+
+# Virtual env
+.venv/
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env / secrets
+.env
+.env.*
+*.pem
+*.key
+secrets.json
+credentials.json
+
+# Local outputs
+*.log
+*.tmp
+data.json
+data_backup/
+
+# Optional: keep configs private except template
+config/tournaments/*.json
+!config/tournaments/_template.json
