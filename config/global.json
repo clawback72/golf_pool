@@ -8,15 +8,15 @@
   },
   "backup": {
     "enabled": true,
-    "directory": "/Users/brianm/Documents/repo/Projects/masters_2025/data_backup"
+    "directory": "/Users/brianm/apps/golf/data_backup"
   },
   "output": {
     "google_sheets": {
       "enabled": true,
       "service_account_env": "GOOGLE_SERVICE_ACCOUNT_JSON",
-      "sheet_url": "",
+      "sheet_url": "https://docs.google.com/spreadsheets/d/1uMtqS8_NfIQ1N87i8ngO5-dnYaeCeVbrACaLuLDP7pc/edit?gid=0#gid=0",
       "worksheet_name": "Sheet1"
     }
   },
-  "active_tournament": "h2026129"
+  "active_tournament": "r2026014"
 }

@@ -6,6 +6,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 import numpy as np
 import pandas as pd
@@ -349,6 +350,173 @@ def _event_ids_match(wanted, got):
     if wanted is None or got is None:
         return False
     return str(wanted).strip().upper() == str(got).strip().upper()
+
+
+def find_tournament_dehydrated_row(json_data, pga_event_id):
+    """First tournament dict in a dehydrated list query matching event id, plus the parent query."""
+    if not pga_event_id:
+        return None, None
+    queries = json_data.get("props", {}).get("pageProps", {}).get("dehydratedState", {}).get("queries", [])
+    for query in queries:
+        data = query.get("state", {}).get("data")
+        if not isinstance(data, list):
+            continue
+        for item in data:
+            if isinstance(item, dict) and _event_ids_match(pga_event_id, item.get("id")):
+                return item, query
+    return None, None
+
+
+def _tournament_logo_url(row):
+    if not isinstance(row, dict):
+        return None
+    logo = row.get("tournamentLogo")
+    if isinstance(logo, list) and logo:
+        u = logo[0]
+        if isinstance(u, str) and u.strip():
+            return u.strip()
+    if isinstance(logo, str) and logo.strip():
+        return logo.strip()
+    return None
+
+
+def _host_course_name(row):
+    if not isinstance(row, dict):
+        return None
+    courses = row.get("courses")
+    if not isinstance(courses, list):
+        return None
+    for c in courses:
+        if isinstance(c, dict) and c.get("hostCourse"):
+            name = c.get("courseName")
+            if name:
+                return name
+    for c in courses:
+        if isinstance(c, dict):
+            name = c.get("courseName")
+            if name:
+                return name
+    return None
+
+
+def _url_image_extension(url):
+    if not url:
+        return ".jpg"
+    path = urlparse(url).path.lower()
+    for ext in (".jpg", ".jpeg", ".png", ".webp"):
+        if path.endswith(ext):
+            return ext
+    return ".jpg"
+
+
+def download_asset(url, dest_path):
+    dest_path = Path(dest_path)
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    dest_path.write_bytes(response.content)
+
+
+def enrich_tournament_config_on_save(cfg, config_path):
+    """Fetch metadata, download images, set per-tournament backup dir. Only runs when pga_event_id is set."""
+    config_path = Path(config_path)
+    src = cfg.get("source") or {}
+    peid = src.get("pga_event_id")
+    if not peid:
+        return
+
+    slug = config_path.stem
+    base = TOURNAMENTS_DIR / slug
+    assets_dir = base / "assets"
+    backups_dir = base / "backups"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    backups_dir.mkdir(parents=True, exist_ok=True)
+
+    cfg.setdefault("backup", {})
+    cfg["backup"]["directory"] = str(backups_dir.resolve())
+
+    try:
+        json_data = fetch_site_json(resolve_leaderboard_url(src))
+    except Exception as exc:
+        print(f"Warning: could not fetch leaderboard for tournament metadata: {exc}")
+        return
+
+    row, _query = find_tournament_dehydrated_row(json_data, peid)
+    if not row:
+        print(f"Warning: no tournament row found for pga_event_id={peid!r} in dehydrated queries.")
+        return
+
+    beauty_url = row.get("beautyImage")
+    logo_url = _tournament_logo_url(row)
+    rel_prefix = Path("config") / "tournaments" / slug / "assets"
+
+    ctx = {
+        "beauty_image_url": beauty_url,
+        "tournament_logo_url": logo_url,
+        "city": row.get("city"),
+        "country": row.get("country"),
+        "state": row.get("state"),
+        "timezone": row.get("timezone"),
+        "course_name": _host_course_name(row),
+        "captured_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+    beauty_file = f"beauty_image{_url_image_extension(beauty_url)}"
+    logo_file = f"tournament_logo{_url_image_extension(logo_url)}"
+
+    if beauty_url:
+        try:
+            download_asset(beauty_url, assets_dir / beauty_file)
+            ctx["beauty_image_local"] = str(rel_prefix / beauty_file)
+        except Exception as exc:
+            print(f"Warning: could not download beauty image: {exc}")
+    if logo_url:
+        try:
+            download_asset(logo_url, assets_dir / logo_file)
+            ctx["tournament_logo_local"] = str(rel_prefix / logo_file)
+        except Exception as exc:
+            print(f"Warning: could not download tournament logo: {exc}")
+
+    cfg["tournament_context"] = ctx
+
+
+def write_live_status_file(tournament_slug, pga_event_id, json_data):
+    if not tournament_slug or not pga_event_id:
+        return
+    try:
+        row, query = find_tournament_dehydrated_row(json_data, pga_event_id)
+        if not row:
+            return
+        state = (query or {}).get("state") or {}
+        data_updated_at = state.get("dataUpdatedAt")
+        w = row.get("weather")
+        weather_out = None
+        if isinstance(w, dict):
+            weather_out = {
+                "condition": w.get("condition"),
+                "humidity": w.get("humidity"),
+                "precipitation": w.get("precipitation"),
+                "tempF": w.get("tempF"),
+                "windDirection": w.get("windDirection"),
+                "windSpeedMPH": w.get("windSpeedMPH"),
+            }
+        payload = {
+            "captured_at": datetime.now().isoformat(timespec="seconds"),
+            "dataUpdatedAt": data_updated_at,
+            "currentRound": row.get("currentRound"),
+            "roundStatus": row.get("roundStatus"),
+            "roundDisplay": row.get("roundDisplay"),
+            "roundStatusDisplay": row.get("roundStatusDisplay"),
+            "roundStatusColor": row.get("roundStatusColor"),
+            "tournamentStatus": row.get("tournamentStatus"),
+            "weather": weather_out,
+        }
+        out_path = TOURNAMENTS_DIR / tournament_slug / "live_status.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f"Warning: could not write live_status.json: {exc}")
 
 
 def _leaderboard_v3_players(state_data):
@@ -868,6 +1036,7 @@ def edit_tournament_config_file(path, picked=None):
         elif action == 5:
             edit_google_sheets_settings(cfg, slug_hint)
         elif action == 6:
+            enrich_tournament_config_on_save(cfg, path)
             save_json_file(path, cfg)
             print(f"Saved tournament config: {path}")
             return cfg
@@ -1057,6 +1226,7 @@ def main(config):
         config["backup"],
         pga_event_id=src.get("pga_event_id"),
         leaderboard_url=lb_url,
+        tournament_slug=config.get("selected_tournament_id"),
     )
 
     if not pool_enabled or not participants:
@@ -1097,7 +1267,14 @@ def main(config):
         publish_google_sheet(worksheet, title, now, sorted_scores, participants, df)
 
 
-def get_data(now_dt, backup_config, pga_event_id=None, leaderboard_url=None, json_data=None):
+def get_data(
+    now_dt,
+    backup_config,
+    pga_event_id=None,
+    leaderboard_url=None,
+    json_data=None,
+    tournament_slug=None,
+):
     """Fetch leaderboard HTML from pgatour; select event via pga_event_id (queryKey) within __NEXT_DATA__."""
     fetch_url = (leaderboard_url or "").strip() or DEFAULT_LEADERBOARD_URL
     if json_data is None:
@@ -1111,6 +1288,8 @@ def get_data(now_dt, backup_config, pga_event_id=None, leaderboard_url=None, jso
             print("JSON data not found on the page.")
             return pd.DataFrame()
         json_data = json.loads(script_tag.string)
+
+    write_live_status_file(tournament_slug, pga_event_id, json_data)
 
     if backup_config.get("enabled", False) and now_dt.minute == 0:
         save_json(json_data, backup_config["directory"])

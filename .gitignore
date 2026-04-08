@@ -29,3 +29,6 @@ data_backup/
 # Optional: keep configs private except template
 config/tournaments/*.json
 !config/tournaments/_template.json
+
+# Per-tournament generated data (images, raw __NEXT_DATA__ backups, live_status.json)
+config/tournaments/*/
