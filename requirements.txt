@@ -1,6 +1,8 @@
 beautifulsoup4
-gspread
+flask
 google-auth
+gspread
+gunicorn
 numpy
 pandas
 pytz

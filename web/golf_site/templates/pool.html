@@ -1,0 +1,224 @@
+{% extends "base.html" %}
+
+{% block title %}{% if page %}{{ page.tournament_name }} — Pool{% else %}Golf pool{% endif %}{% endblock %}
+
+{% block body %}
+<div class="page">
+  {% if error %}
+  <div class="card card--error">
+    <p>{{ error }}</p>
+  </div>
+  {% else %}
+  <header class="site-header">
+    <div class="header-top">
+      <div class="header-text">
+        <h1 class="tournament-title">{{ page.tournament_name }}</h1>
+        {% if page.course_name %}
+        <p class="course-name">{{ page.course_name }}</p>
+        {% endif %}
+        {% if page.location_line %}
+        <p class="location-line">{{ page.location_line }}</p>
+        {% endif %}
+      </div>
+      {% if page.slug and page.logo_filename %}
+      <div class="header-logo">
+        <img src="{{ url_for('main.tournament_asset', slug=page.slug, filename=page.logo_filename) }}" alt="Tournament logo" class="tournament-logo-img" width="120" height="120" loading="lazy">
+      </div>
+      {% endif %}
+    </div>
+    {% if page.slug and page.beauty_filename %}
+    <div class="beauty-wrap">
+      <img src="{{ url_for('main.tournament_asset', slug=page.slug, filename=page.beauty_filename) }}" alt="" class="beauty-img" loading="lazy">
+    </div>
+    {% endif %}
+  </header>
+
+  <div class="status-weather-grid">
+    <section class="card status-card" aria-labelledby="live-status-heading">
+      <h2 id="live-status-heading" class="card-title">Live status</h2>
+      {% if page.live %}
+      {% if page.live.tournamentStatus %}
+      <p class="meta-line"><span class="meta-label">Tournament status</span></p>
+      <p class="meta-line tournament-status-line">{{ page.live.tournamentStatus | replace('_', ' ') }}</p>
+      {% endif %}
+      {% if page.pga_data_updated_display %}
+      <p class="meta-line"><span class="meta-label">PGA data updated</span> {{ page.pga_data_updated_display }}</p>
+      {% endif %}
+      <p class="meta-line"><span class="meta-label">Current round</span> {{ page.live.currentRound if page.live.currentRound is not none else '—' }}</p>
+      {% if page.live.roundStatusDisplay %}
+      <p class="status-pill-wrap">
+        <span class="status-pill {{ page.round_status_class }}">{{ page.live.roundStatusDisplay }}</span>
+      </p>
+      {% endif %}
+      {% if page.live.cut_mobile_display %}
+      <p class="meta-line cut-line-text">{{ page.live.cut_mobile_display }}</p>
+      {% endif %}
+      {% else %}
+      <p class="muted">No live_status.json yet. Run <code>tourney.py</code> once.</p>
+      {% endif %}
+    </section>
+
+    {% if page.weather and (page.weather.tempF or page.weather.condition_label or page.weather.wind) %}
+    <section class="card weather-card" aria-labelledby="weather-heading">
+      <h2 id="weather-heading" class="card-title">Weather</h2>
+      {% if page.weather.tempF %}<p class="weather-temp">{{ page.weather.tempF }}</p>{% endif %}
+      {% if page.weather.condition_label %}<p>{{ page.weather.condition_label }}</p>{% endif %}
+      {% if page.weather.wind %}<p class="muted">{{ page.weather.wind }}</p>{% endif %}
+      {% if page.weather.humidity %}<p class="muted">Humidity {{ page.weather.humidity }}</p>{% endif %}
+      {% if page.weather.precipitation %}<p class="muted">Precipitation {{ page.weather.precipitation }}</p>{% endif %}
+    </section>
+    {% endif %}
+  </div>
+
+  {% if page.missing_picks %}
+  <div class="card card--warn" role="status">
+    <strong>Missing picks</strong> (not on leaderboard): 
+    {% for name, ids in page.missing_picks.items() %}
+    <span>{{ name }}: {{ ids | join(', ') }}</span>{% if not loop.last %}; {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <section class="card standings-card" aria-labelledby="standings-heading">
+    <div class="standings-header-row">
+      <h2 id="standings-heading" class="card-title">Current standings</h2>
+      {% if page.standings_rows %}
+      <div class="expand-actions">
+        <button type="button" class="linkish" id="expand-all">Expand all</button>
+        <button type="button" class="linkish" id="collapse-all">Collapse all</button>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if not page.has_snapshot %}
+    <p class="muted">No pool snapshot yet. Run <code>tourney.py --once</code> with pool enabled to generate <code>pool_snapshot.json</code>.</p>
+    {% else %}
+    <div class="standings-list">
+      {% for row in page.standings_rows %}
+      <details class="standing-block" data-standing data-participant="{{ row.participant }}">
+        <summary class="standing-summary">
+          <span class="col-rank">{{ row.rank }}</span>
+          <span class="col-name">{{ row.participant }}</span>
+          <span class="col-net">{{ row.net_score }}</span>
+        </summary>
+        <div class="standing-detail">
+          {% if row.golfers %}
+          <div class="table-scroll">
+            <table class="golfer-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Score</th>
+                  <th>Pos</th>
+                  <th>Today</th>
+                  <th>Thru</th>
+                  <th>Rounds</th>
+                  <th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for g in row.golfers %}
+                <tr>
+                  <td>{{ g.Name | default('—', true) }}</td>
+                  <td>{{ g.Score | default('—', true) }}</td>
+                  <td>{{ g.Position | default('—', true) }}</td>
+                  <td>{{ g.Today | default('—', true) }}</td>
+                  <td>{{ g.Thru | default('—', true) }}</td>
+                  <td>{{ g.Rounds | default('—', true) }}</td>
+                  <td>{{ g.Total | default('—', true) }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <p class="muted">No golfer data for this participant.</p>
+          {% endif %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </section>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+{% if not error %}
+<script type="application/json" id="refresh-meta-json">{{ initial_meta | tojson }}</script>
+<script>
+(function () {
+  var STORAGE_KEY = 'golfPoolStandingsOpen';
+
+  function getOpenParticipants() {
+    var names = [];
+    document.querySelectorAll('details[data-standing][data-participant]').forEach(function (d) {
+      if (d.open) names.push(d.getAttribute('data-participant'));
+    });
+    return names;
+  }
+
+  function saveOpenStandings() {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(getOpenParticipants()));
+    } catch (e) {}
+  }
+
+  function restoreOpenStandings() {
+    try {
+      var raw = sessionStorage.getItem(STORAGE_KEY);
+      if (!raw) return;
+      var open = JSON.parse(raw);
+      if (!Array.isArray(open)) return;
+      var set = {};
+      open.forEach(function (n) { set[n] = true; });
+      document.querySelectorAll('details[data-standing][data-participant]').forEach(function (d) {
+        var name = d.getAttribute('data-participant');
+        if (name && set[name]) d.open = true;
+      });
+    } catch (e) {}
+  }
+
+  document.querySelectorAll('details[data-standing]').forEach(function (d) {
+    d.addEventListener('toggle', saveOpenStandings);
+  });
+
+  restoreOpenStandings();
+
+  var el = document.getElementById('refresh-meta-json');
+  var initial = el ? JSON.parse(el.textContent) : {};
+  var lastPool = initial.pool_captured_at;
+  function tick() {
+    fetch('/api/refresh-meta')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var cur = j.pool_captured_at == null ? null : j.pool_captured_at;
+        if (cur !== lastPool) {
+          lastPool = cur;
+          saveOpenStandings();
+          window.location.reload();
+        }
+      })
+      .catch(function () {});
+  }
+  setInterval(tick, 45000);
+
+  var expandBtn = document.getElementById('expand-all');
+  var collapseBtn = document.getElementById('collapse-all');
+  if (expandBtn) {
+    expandBtn.addEventListener('click', function () {
+      document.querySelectorAll('details[data-standing]').forEach(function (d) { d.open = true; });
+      saveOpenStandings();
+    });
+  }
+  if (collapseBtn) {
+    collapseBtn.addEventListener('click', function () {
+      document.querySelectorAll('details[data-standing]').forEach(function (d) { d.open = false; });
+      saveOpenStandings();
+    });
+  }
+})();
+</script>
+{% endif %}
+{% endblock %}

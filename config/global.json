@@ -3,8 +3,8 @@
   "participants": {},
   "source": {},
   "run_window": {
-    "start_hour": 1,
-    "end_hour": 18
+    "start_hour": 7,
+    "end_hour": 20
   },
   "backup": {
     "enabled": true,

@@ -16,12 +16,14 @@ The script supports multiple tours and tournament-specific configs:
 - Calculates participant scores from configured golfer picks
 - Prints standings + detailed participant breakdown to terminal
 - Optionally writes standings to Google Sheets
+- Writes `pool_snapshot.json` for the optional web UI (same run as Sheets)
 - Provides an interactive admin mode to manage tournaments and picks
 
 ## Files
 
 - `tourney.py` - main script
 - `requirements.txt` - Python dependencies
+- `web/` - Flask site (gunicorn) that reads `config/global.json`, `live_status.json`, and `pool_snapshot.json`
 - `config/global.json` - global defaults and active tournament
 - `config/tournaments/*.json` - tournament-specific configs
 - `config/tournaments/_template.json` - template for new tournament config
@@ -135,6 +137,27 @@ These are used to suggest/derive leaderboard URLs:
 - `Y` -> `https://www.pgatour.com/americas/leaderboard`
 
 For weeks with two active `R*` events (major + opposite-field), admin mode supports selecting a secondary PGA Tour URL or entering a custom URL.
+
+## Web UI (Flask + gunicorn)
+
+The pool page shows the active tournament (`config/global.json` → `active_tournament`), tournament context and assets, live status/weather, and expandable standings from `config/tournaments/<slug>/pool_snapshot.json` (created when `tourney.py` runs with pool scoring enabled).
+
+From the **repo root** (`golf/`, same folder as `tourney.py`), with the same virtualenv as the scraper:
+
+```bash
+cd /absolute/path/to/golf
+source .venv/bin/activate   # optional
+export GOLF_POOL_ROOT="/absolute/path/to/golf"   # optional; defaults to parent of web/golf_site
+gunicorn -w 2 -b 127.0.0.1:5000 wsgi:app
+```
+
+If you prefer to run from `golf/web/`, use the same command there (that directory is already on `PYTHONPATH`).
+
+`ModuleNotFoundError: No module named 'wsgi'` means gunicorn was started from a directory that does not contain `wsgi.py` (for example only `.venv/bin`). Always `cd` to the repo root or to `web/` first.
+
+Bind to `127.0.0.1` only and reverse-proxy with nginx or Nginx Proxy Manager to your DuckDNS host.
+
+See [`web/golf-pool-web.example.service`](web/golf-pool-web.example.service) for a systemd unit template (`Environment=GOLF_POOL_ROOT=...`, `WorkingDirectory=.../golf`).
 
 ## Google Sheets Notes
 

@@ -511,6 +511,10 @@ def write_live_status_file(tournament_slug, pga_event_id, json_data):
             "tournamentStatus": row.get("tournamentStatus"),
             "weather": weather_out,
         }
+        players_lb = find_leaderboard_players(json_data, pga_event_id)
+        cut_mobile = extract_cut_mobile_display_text(players_lb)
+        if cut_mobile:
+            payload["cut_mobile_display"] = cut_mobile
         out_path = TOURNAMENTS_DIR / tournament_slug / "live_status.json"
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "w", encoding="utf-8") as f:
@@ -588,6 +592,30 @@ def find_leaderboard_players(json_data, pga_event_id=None):
                         fallback = players
                     break
     return fallback
+
+
+def extract_cut_mobile_display_text(players):
+    """Pick cut line copy from LeaderboardV3 players (InformationRow). Prefer non-projected id when both exist."""
+    if not isinstance(players, list) or not players:
+        return None
+    matches = []
+    for item in players:
+        if not isinstance(item, dict):
+            continue
+        if item.get("__typename") != "InformationRow":
+            continue
+        row_id = (item.get("id") or "").lower()
+        if "cut" not in row_id:
+            continue
+        text = item.get("mobileDisplayText")
+        if not text or not str(text).strip():
+            continue
+        matches.append(item)
+    if not matches:
+        return None
+    non_projected = [m for m in matches if "-projected-cut" not in (m.get("id") or "").lower()]
+    chosen = non_projected[-1] if non_projected else matches[-1]
+    return str(chosen.get("mobileDisplayText")).strip()
 
 
 def load_golfer_lookup(source_dict):
@@ -1172,6 +1200,80 @@ def compute_scores(df, participant_selections):
     return sorted_scores, missing_ids
 
 
+def _json_scalar_cell(v):
+    try:
+        if pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(v, "item"):
+        try:
+            return v.item()
+        except Exception:
+            pass
+    return v
+
+
+def _participant_detail_rows(df, selections):
+    """Same golfer table as Google Sheets detail: Name, Score, Position, Today, Thru, Rounds, Total."""
+    participant_df = pd.DataFrame()
+    for golfer in selections:
+        golfer_data = df[df["PlayerID"].astype(str) == str(golfer)]
+        if participant_df.empty:
+            participant_df = golfer_data.copy()
+        else:
+            participant_df = pd.concat([participant_df, golfer_data], ignore_index=True)
+    if participant_df.empty:
+        return []
+    selected_columns = participant_df[["Name", "Position", "Today", "Thru", "Score", "Rounds", "Total", "Points"]]
+    selected_columns = selected_columns.sort_values(by="Points", ascending=False)
+    selected_columns = selected_columns[["Name", "Score", "Position", "Today", "Thru", "Rounds", "Total"]]
+    rows = []
+    for _, row in selected_columns.iterrows():
+        rows.append({col: _json_scalar_cell(row[col]) for col in selected_columns.columns})
+    return rows
+
+
+def write_pool_snapshot_file(tournament_slug, timestamp, sorted_scores, missing_ids, participant_selections, df):
+    if not tournament_slug:
+        return
+    try:
+        standings = []
+        for rank, (participant, (total_points, projected_winnings, net_score)) in enumerate(
+            sorted_scores.items(), start=1
+        ):
+            standings.append({
+                "rank": rank,
+                "participant": participant,
+                "net_score": int(net_score),
+                "total_points": int(total_points),
+                "projected_winnings": int(projected_winnings),
+            })
+        detail = []
+        for sorted_participant, (total_points, projected_winnings, net_score) in sorted_scores.items():
+            selections = participant_selections[sorted_participant]
+            golfer_rows = _participant_detail_rows(df, selections)
+            detail.append({
+                "participant": sorted_participant,
+                "net_score": int(net_score),
+                "total_points": int(total_points),
+                "projected_winnings": int(projected_winnings),
+                "golfers": golfer_rows,
+            })
+        payload = {
+            "captured_at": timestamp.isoformat(timespec="seconds"),
+            "standings": standings,
+            "detail": detail,
+            "missing_picks": {k: [str(x) for x in v] for k, v in (missing_ids or {}).items()},
+        }
+        out_path = TOURNAMENTS_DIR / tournament_slug / "pool_snapshot.json"
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception as exc:
+        print(f"Warning: could not write pool_snapshot.json: {exc}")
+
+
 def publish_google_sheet(worksheet, title, timestamp, sorted_scores, participant_selections, df):
     worksheet.clear()
     dt_str = timestamp.strftime("%m/%d/%Y %H:%M")
@@ -1185,21 +1287,15 @@ def publish_google_sheet(worksheet, title, timestamp, sorted_scores, participant
         worksheet.append_rows(values)
 
     worksheet.update(range_name="A12", values=[["Participant Standings Detail:"]])
+    columns = ["Name", "Score", "Position", "Today", "Thru", "Rounds", "Total"]
     for sorted_participant, (_, _, net_score) in sorted_scores.items():
         worksheet.append_rows([[sorted_participant, int(net_score)]])
-        selections = participant_selections[sorted_participant]
-        participant_df = pd.DataFrame()
-        for golfer in selections:
-            golfer_data = df[df["PlayerID"].astype(str) == str(golfer)]
-            if participant_df.empty:
-                participant_df = golfer_data.copy()
-            else:
-                participant_df = pd.concat([participant_df, golfer_data], ignore_index=True)
-
-        selected_columns = participant_df[["Name", "Position", "Today", "Thru", "Score", "Rounds", "Total", "Points"]]
-        selected_columns = selected_columns.sort_values(by="Points", ascending=False)
-        selected_columns = selected_columns[["Name", "Score", "Position", "Today", "Thru", "Rounds", "Total"]]
-        values = [selected_columns.columns.tolist()] + selected_columns.values.tolist()
+        row_dicts = _participant_detail_rows(df, participant_selections[sorted_participant])
+        if not row_dicts:
+            worksheet.append_rows([["No golfer data"]])
+            worksheet.append_rows([["_"]])
+            continue
+        values = [columns] + [["" if row.get(c) is None else row.get(c) for c in columns] for row in row_dicts]
         worksheet.append_rows(values)
         worksheet.append_rows([["_"]])
 
@@ -1234,6 +1330,14 @@ def main(config):
         return
 
     sorted_scores, missing_ids = compute_scores(df, participants)
+    write_pool_snapshot_file(
+        config.get("selected_tournament_id"),
+        now,
+        sorted_scores,
+        missing_ids,
+        participants,
+        df,
+    )
     for participant, (score, projected_winnings, net_score) in sorted_scores.items():
         print(f"{participant}: {score} {projected_winnings} {net_score}")
 
